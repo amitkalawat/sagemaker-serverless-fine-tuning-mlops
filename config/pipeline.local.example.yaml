@@ -1,0 +1,14 @@
+# Copy to config/pipeline.local.yaml (gitignored) and fill in. Merged over pipeline.yaml,
+# so only list the keys you set or override.
+
+mlflow:
+  # Your SageMaker MLflow app (Studio: MLflow -> Apps). Find it with:
+  #   aws sagemaker list-mlflow-apps --query 'Summaries[].[Name,Arn]'
+  tracking_server_arn: arn:aws:sagemaker:<region>:<account-id>:mlflow-app/app-XXXXXXXXXXXX
+
+deploy:
+  # Set to true only after reviewing the base model's license (Gemma 4 E4B-IT: Apache-2.0).
+  accept_eula: false
+
+stack:
+  notification_email: ""   # optional: approval requests and pipeline results by email

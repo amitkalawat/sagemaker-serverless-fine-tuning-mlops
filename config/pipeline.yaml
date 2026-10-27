@@ -1,0 +1,90 @@
+# Shared configuration for the scripts, both pipeline definitions and the CDK stack.
+# No account-specific values here: put those in config/pipeline.local.yaml (gitignored;
+# start from config/pipeline.local.example.yaml), which is merged over this file.
+# Values are baked into the pipeline definitions at synth time: redeploy after edits.
+
+region: us-west-2
+
+# Smallest Gemma 4 model in SageMakerPublicHub with the customization capability.
+# License: Apache-2.0 (no EULA acceptance required).
+base_model: huggingface-vlm-gemma-4-e4b-it
+
+model_package_group_name: gemma4-e4b-sft-dolly
+pipeline_name: gemma4-e4b-serverless-sft
+
+# Raw data: Databricks Dolly 15k (CC BY-SA 3.0), converted to {"prompt", "completion"}.
+data:
+  # Pinned to a dataset revision so a changed upstream file can't silently change training
+  # data. License: CC BY-SA 3.0 (https://huggingface.co/datasets/databricks/databricks-dolly-15k).
+  source_url: https://huggingface.co/datasets/databricks/databricks-dolly-15k/resolve/bdd27f4d94b9c1f951818a7da7fd7aeea5dbff1a/databricks-dolly-15k.jsonl
+  categories: [closed_qa, information_extraction, summarization]
+  max_chars: 6000          # drop examples whose prompt+completion exceed this length
+  train_size: 512          # global_batch_size min is 128, so keep at least a few batches
+  validation_size: 64
+  eval_size: 64
+  seed: 42
+
+# SFT hyperparameters (validated against the hub recipe; see `get_info()` ranges).
+hyperparameters:
+  max_epochs: 2
+  learning_rate: 0.0001
+  global_batch_size: 128   # allowed: 128, 256, 512, 1024
+  lora_rank: 16            # allowed: 8, 16, 32, 64, 128
+  lora_alpha: 32           # allowed: 16, 32, 64, 128, 256
+  dataset_max_len: 2048    # the SFT sequence length; range 256 - 32768
+  lr_scheduler: cosine
+  warmup_steps: 5
+
+# Quality gate on a metric the training job logs to MLflow (last logged step).
+# The Gemma 4 SFT recipe logs train/* metrics only - no validation loss, even when a
+# validation dataset is supplied - so the gate checks that training converged.
+# First test run: train/loss 2.23 -> 1.17 over 8 steps.
+quality_gate:
+  metric: train/loss
+  max_value: 1.5
+
+# MLflow tracking in the Studio domain's MLflow app. Each pipeline execution (or standalone
+# run) gets a summary run `pipeline-<execution id>` with params, data stats, ARNs, gate
+# result, copied training curves and CloudWatch logs. The SFT job logs its own run,
+# `sft-<execution id>`, in the same experiment.
+mlflow:
+  tracking_server_arn: ""   # set in pipeline.local.yaml; empty disables MLflow tracking
+  experiment_name: gemma4-e4b-serverless-sft
+
+# Compute for the lightweight @step jobs that orchestrate the serverless jobs.
+# The serverless SFT job itself picks its own GPUs.
+step_instance_type: ml.m5.large
+# SageMaker Distribution 4.6 CPU image (Python 3.12 + SDK v3). Pinned so the
+# pipeline definition is reproducible outside Studio.
+step_image_uri: 542918446943.dkr.ecr.us-west-2.amazonaws.com/sagemaker-distribution-prod@sha256:7f7267ffc9b5cd98d0f3f704949dad358399c6687b7b3195437bf2e70b92ca66
+
+# Deploy pipeline (pipeline/deploy_definition.py): approval-gated deployment of the newest
+# PendingManualApproval model package to a SageMaker real-time endpoint. Bedrock Custom Model
+# Import doesn't support the Gemma 4 architecture, so the target is SageMaker.
+deploy:
+  pipeline_name: gemma4-e4b-sft-deploy
+  endpoint_name: gemma4-e4b-sft-dolly
+  instance_type: ml.g7.2xlarge   # 1x RTX PRO 4500 (32 GB); not on the hub's tested list
+  # Required by ModelBuilder to use the base model's JumpStart hosting artifacts for LoRA.
+  # Gemma 4 E4B-IT is Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0). Review the
+  # license and set this to true in pipeline.local.yaml to accept it; deploys fail until then.
+  accept_eula: false
+  smoke_test_examples: 3         # held-out eval.jsonl examples sent to the new adapter
+  # Resources reserved for the base model inference component. Required for instance types
+  # the SDK has no defaults for (it omits the GPU count, which CreateInferenceComponent
+  # rejects). ml.g7.2xlarge has 8 vCPUs, 32 GB RAM and 1 GPU, but 4 vCPUs + 16 GB was
+  # rejected as "not enough hardware resources" (SageMaker reserves part of the host);
+  # 2 vCPUs + 8 GB places fine. The model weights live in GPU memory, not this reservation.
+  compute:
+    num_accelerators: 1
+    num_cpus: 2
+    memory_mb: 8192
+
+# Names of the resources the CDK stack owns (kept separate from the names above, which the
+# standalone script and `pipeline/definition.py --upsert` use).
+stack:
+  stack_name: Gemma4ServerlessSftPipeline
+  pipeline_name: gemma4-e4b-serverless-sft-cdk
+  model_package_group_name: gemma4-e4b-sft-dolly-cdk
+  deploy_pipeline_name: gemma4-e4b-sft-deploy-cdk
+  notification_email: ""   # set to receive pipeline status and approval-request emails (SNS)

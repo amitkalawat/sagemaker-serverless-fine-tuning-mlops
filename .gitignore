@@ -1,0 +1,26 @@
+# Account-specific configuration (copy config/pipeline.local.example.yaml)
+config/pipeline.local.yaml
+
+# Runtime output: contains account IDs, ARNs, job names, stack outputs and data copies
+data/
+logs/
+manifests/
+*.log
+
+# CDK
+cdk/.venv/
+cdk/cdk.out/
+cdk.context.json
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+# Local credentials and editor files
+.env
+.env.*
+*.pem
+.aws/
+.DS_Store
